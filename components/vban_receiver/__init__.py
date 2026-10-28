@@ -14,6 +14,7 @@ CONF_MICROPHONE = "microphone"
 CONF_LISTEN_PORT = "listen_port"
 CONF_STREAM_NAME = "stream_name"
 CONF_IDLE_TIMEOUT_MS = "idle_timeout_ms"
+CONF_PREBUFFER_MS = "prebuffer_ms"
 
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(VBANReceiver),
@@ -22,6 +23,7 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Optional(CONF_LISTEN_PORT, default=6980): cv.port,
     cv.Required(CONF_STREAM_NAME): cv.All(cv.string, cv.Length(max=16)),
     cv.Optional(CONF_IDLE_TIMEOUT_MS, default=1500): cv.positive_int,
+    cv.Optional(CONF_PREBUFFER_MS, default=200): cv.int_range(min=0, max=1000),
 }).extend(cv.COMPONENT_SCHEMA)
 
 
@@ -39,3 +41,4 @@ async def to_code(config):
     cg.add(var.set_listen_port(config[CONF_LISTEN_PORT]))
     cg.add(var.set_stream_name(config[CONF_STREAM_NAME]))
     cg.add(var.set_idle_timeout_ms(config[CONF_IDLE_TIMEOUT_MS]))
+    cg.add(var.set_prebuffer_ms(config[CONF_PREBUFFER_MS]))

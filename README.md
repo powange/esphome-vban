@@ -52,6 +52,7 @@ vban_receiver:
   listen_port: 6980
   stream_name: "TTS1"           # 16 chars max, doit matcher l'émetteur
   idle_timeout_ms: 1500         # délai sans paquet avant arrêt du speaker
+  prebuffer_ms: 200             # tampon anti-gigue avant lecture
 ```
 
 | Paramètre          | Requis | Défaut | Description |
@@ -61,6 +62,23 @@ vban_receiver:
 | `listen_port`      | ❌     | `6980` | Port UDP d'écoute |
 | `stream_name`      | ✅     | —      | Nom du flux à accepter (16 chars max) |
 | `idle_timeout_ms`  | ❌     | `1500` | Durée sans paquet avant `stop()` |
+| `prebuffer_ms`     | ❌     | `200`  | Son mis en tampon avant de démarrer la lecture (0–1000) |
+
+### Tampon anti-gigue
+
+En Wi-Fi, les paquets arrivent de façon irrégulière (gigue), surtout avec un
+signal faible. Tous les paquets passent donc par un tampon circulaire : la
+lecture ne démarre qu'une fois `prebuffer_ms` de son accumulé (ou si aucun
+paquet n'arrive pendant 150 ms, pour les réponses courtes). Si le tampon se
+vide en cours de flux (underrun), le receiver se remet en attente avec un
+seuil réduit à `prebuffer_ms / 2`. Augmenter `prebuffer_ms` si le son reste
+haché, au prix d'une latence plus élevée.
+
+À la fin de chaque flux, un résumé est logué en `DEBUG` :
+
+```
+[vban_rx] Stream 'TTS1' ended: 412 packets, 0 lost, 0 out of order, 0 underruns
+```
 
 ## Format audio supporté
 
@@ -97,6 +115,7 @@ VBAN Receiver:
   Packets received: 124
   Packets lost:     0
   Out of order:     0
+  Underruns:        0
 ```
 
 ## Half-duplex I2S
@@ -105,6 +124,21 @@ L'implémentation `i2s_audio` d'ESPHome ne supporte pas le full-duplex sur un
 même bus. Sur les plateformes avec un seul jeu de pins vers le codec (Atom
 Echo S3R, etc.), le `vban_receiver` arrête le mic pendant la lecture puis le
 relance au bout de `idle_timeout_ms` sans paquet.
+
+L'arrêt du micro étant asynchrone, le speaker n'est démarré qu'une fois le
+micro effectivement arrêté (sinon `Parent bus is busy`), avec un délai max de
+500 ms. De même, le micro n'est relancé qu'une fois le speaker arrêté.
+
+## Recommandations Wi-Fi
+
+- `wifi: power_save_mode: none` : indispensable pour l'audio. Le mode
+  d'économie d'énergie par défaut provoque des pertes de paquets et une voix
+  accélérée.
+- Préférer l'**unicast** (IP du serveur) au broadcast pour `vban_sender` :
+  en Wi-Fi, le broadcast est émis au débit minimal et sans accusé de
+  réception, donc sans retransmission en cas de perte.
+- Surveiller le signal avec un capteur `wifi_signal` : en dessous de
+  -70 dBm environ, augmenter `prebuffer_ms`.
 
 ## Devices testés
 
