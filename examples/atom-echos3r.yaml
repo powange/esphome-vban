@@ -3,6 +3,7 @@ substitutions:
   friendly_name: "Atom Bureau"
   vban_stream_name: "AtomBureau"      # nom du flux envoye par le micro
   vban_tts_stream_name: "AtomBureauSpk"        # nom du flux ecoute pour la lecture TTS (16 chars max)
+  ha_server_ip: "192.168.0.10"        # IP du serveur Home Assistant (a adapter)
 
 esphome:
   name: ${name}
@@ -32,11 +33,17 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: none   # indispensable pour l'audio : sinon pertes de paquets et voix accelérée
   ap:
     ssid: "${friendly_name} Fallback"
     password: !secret atom_ap_password
 
 captive_portal:
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
 
 external_components:
   - source: github://powange/esphome-vban
@@ -121,7 +128,10 @@ media_player:
 vban_sender:
   id: vban
   microphone: atom_mic
-  target_ip: "192.168.0.255"  # broadcast du subnet (tous les receivers du LAN)
+  # Unicast vers Home Assistant plutot que broadcast : en Wi-Fi, le broadcast
+  # part au debit minimal et sans accuse de reception (aucune retransmission),
+  # d'ou des pertes de paquets. L'unicast est acquitte et retransmis.
+  target_ip: ${ha_server_ip}
   target_port: 6980
   stream_name: ${vban_stream_name}
   gain: 1.0                  # amplification logicielle (mic Atom Echo tres faible)
@@ -134,3 +144,4 @@ vban_receiver:
   listen_port: 6980
   stream_name: ${vban_tts_stream_name}   # doit matcher tts_vban_stream_name de l'addon
   idle_timeout_ms: 1500
+  prebuffer_ms: 200          # tampon anti-gigue avant de lancer la lecture
