@@ -2,6 +2,7 @@
 #include "esphome.h"
 #include "esphome/components/speaker/speaker.h"
 #include "esphome/components/microphone/microphone.h"
+#include "esphome/core/helpers.h"
 
 #include <lwip/sockets.h>
 #include <arpa/inet.h>
@@ -16,6 +17,8 @@ namespace vban_receiver {
 
 static const uint8_t VBAN_SR_16000 = 8;
 static const uint32_t VBAN_BYTES_PER_MS = 32;  // 16 kHz, mono, 16-bit
+static const int VBAN_RCVBUF_BYTES = 32 * 1024;
+static const int VBAN_MAX_PACKETS_PER_LOOP = 64;
 
 // IDLE -> WAITING_MIC -> BUFFERING <-> PLAYING -> STOPPING -> IDLE
 enum class PlaybackState : uint8_t { IDLE, WAITING_MIC, BUFFERING, PLAYING, STOPPING };
@@ -44,6 +47,14 @@ class VBANReceiver : public Component {
     int reuse = 1;
     ::setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
+    // Absorb sender bursts between two loop() calls. Needs CONFIG_LWIP_SO_RCVBUF;
+    // the packet count is capped separately by CONFIG_LWIP_UDP_RECVMBOX_SIZE.
+    int rcvbuf = VBAN_RCVBUF_BYTES;
+    if (::setsockopt(sock_, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
+      ESP_LOGW("vban_rx", "setsockopt(SO_RCVBUF, %d) failed: errno=%d (enable CONFIG_LWIP_SO_RCVBUF)",
+               rcvbuf, errno);
+    }
+
     struct sockaddr_in bind_addr{};
     bind_addr.sin_family = AF_INET;
     bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -67,12 +78,14 @@ class VBANReceiver : public Component {
   void loop() override {
     uint8_t buf[2048];
     struct sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
 
-    for (int i = 0; i < 8; i++) {
+    // Drain the socket completely: lwIP drops datagrams once its queue is full.
+    for (int i = 0; i < VBAN_MAX_PACKETS_PER_LOOP; i++) {
+      socklen_t fromlen = sizeof(from);
       int n = ::recvfrom(sock_, buf, sizeof(buf), 0,
                         (struct sockaddr *)&from, &fromlen);
-      if (n < 28) break;
+      if (n < 0) break;  // EAGAIN/EWOULDBLOCK: queue empty (or socket error)
+      if (n < 28) continue;
       handle_packet_(buf, n);
     }
 
@@ -96,6 +109,9 @@ class VBANReceiver : public Component {
   void handle_packet_(const uint8_t *buf, int n) {
     if (buf[0] != 'V' || buf[1] != 'B' || buf[2] != 'A' || buf[3] != 'N') return;
 
+    // Filter by stream name first: the port also carries other devices' streams.
+    if (std::strncmp((const char *) buf + 8, stream_name_.c_str(), 16) != 0) return;
+
     uint8_t sub_protocol = buf[4] & 0xE0;
     if (sub_protocol != 0x00) return;  // only audio sub-protocol
 
@@ -116,10 +132,6 @@ class VBANReceiver : public Component {
       log_format_warning_("channels", channels);
       return;
     }
-
-    char name[17] = {};
-    std::memcpy(name, buf + 8, 16);
-    if (std::strncmp(name, stream_name_.c_str(), 16) != 0) return;
 
     const uint8_t *pcm = buf + 28;
     size_t pcm_len = n - 28;
@@ -268,6 +280,13 @@ class VBANReceiver : public Component {
   void set_state_(PlaybackState state) {
     state_ = state;
     state_since_ms_ = millis();
+    // Run loop() continuously while a stream is active so the socket is read
+    // often enough.
+    if (state == PlaybackState::IDLE) {
+      high_freq_.stop();
+    } else {
+      high_freq_.start();
+    }
   }
 
   void begin_stream_() {
@@ -345,6 +364,7 @@ class VBANReceiver : public Component {
   size_t buffer_target_bytes_{0};
   uint32_t speaker_dry_at_us_{0};
   bool underrun_pending_{false};
+  HighFrequencyLoopRequester high_freq_;
 
   // Fixed-capacity circular buffer (~2 s at 16 kHz 16-bit mono).
   static constexpr size_t kRingCapacity = 64 * 1024;
