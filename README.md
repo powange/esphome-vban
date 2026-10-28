@@ -33,10 +33,37 @@ capture après le setup. Aucune boucle `interval:` n'est nécessaire.
 | Paramètre      | Requis | Défaut     | Description |
 |----------------|--------|------------|-------------|
 | `microphone`   | ✅     | —          | ID du micro ESPHome |
-| `target_ip`    | ✅     | —          | Destination (unicast / broadcast / multicast) |
-| `target_port`  | ❌     | `6980`     | Port UDP |
+| `target_ip`    | ⚠️     | —          | Destination unique (unicast / broadcast / multicast) |
+| `target_port`  | ❌     | `6980`     | Port UDP de `target_ip` |
+| `targets`      | ⚠️     | —          | Liste de destinations `{ip, port}` (`port` : `6980` par défaut) |
 | `stream_name`  | ❌     | `AtomEcho` | Nom du flux VBAN (16 chars max) |
 | `gain`         | ❌     | `1.0`      | Gain logiciel avec clipping `±32767` |
+
+⚠️ Exactement un des deux : `target_ip` (avec `target_port` optionnel) **ou**
+`targets`.
+
+### Plusieurs destinations
+
+En unicast, Linux ne livre chaque datagramme qu'à **un seul** socket : si deux
+applications du même hôte écoutent le même port, une seule reçoit le flux. Avec
+`targets`, chaque paquet VBAN est construit une fois (même en-tête, même
+compteur de trames) puis envoyé à chaque destination, par exemple deux ports
+différents du serveur :
+
+```yaml
+vban_sender:
+  microphone: atom_mic
+  stream_name: "AtomBureau"
+  targets:
+    - ip: "192.168.0.201"   # Wyoming VBAN (Jarvis)
+      port: 6980
+    - ip: "192.168.0.201"   # ClapTrap
+      port: 6981
+```
+
+Chaque destination ajoute un envoi par paquet. Les échecs de `sendto()` sont
+comptés par cible (visible dans `dump_config`) et logués au plus une fois
+toutes les 5 s.
 
 ## `vban_receiver`
 
@@ -102,7 +129,8 @@ connexion d'un client API) :
 
 ```
 VBAN Sender:
-  Target: 192.168.0.255:6980
+  Target: 192.168.0.201:6980 (send errors: 0)
+  Target: 192.168.0.201:6981 (send errors: 0)
   Stream name: AtomBureau
   Socket: OK
   Mic started: YES

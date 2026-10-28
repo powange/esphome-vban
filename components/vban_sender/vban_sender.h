@@ -19,8 +19,12 @@ static const uint8_t VBAN_SR_16000 = 8;
 class VBANSender : public Component {
  public:
   void set_microphone(microphone::Microphone *mic) { mic_ = mic; }
-  void set_target_ip(const std::string &ip) { target_ip_ = ip; }
-  void set_target_port(uint16_t port) { target_port_ = port; }
+  void add_target(const std::string &ip, uint16_t port) {
+    Target t;
+    t.ip = ip;
+    t.port = port;
+    targets_.push_back(t);
+  }
   void set_stream_name(const std::string &name) { stream_name_ = name; }
   void set_gain(float gain) { gain_ = gain; }
 
@@ -40,15 +44,17 @@ class VBANSender : public Component {
     int bcast = 1;
     ::setsockopt(sock_, SOL_SOCKET, SO_BROADCAST, &bcast, sizeof(bcast));
 
-    std::memset(&dest_addr_, 0, sizeof(dest_addr_));
-    dest_addr_.sin_family = AF_INET;
-    dest_addr_.sin_port = htons(target_port_);
-    if (::inet_aton(target_ip_.c_str(), &dest_addr_.sin_addr) == 0) {
-      ESP_LOGE("vban", "invalid target_ip: %s", target_ip_.c_str());
-      ::close(sock_);
-      sock_ = -1;
-      mark_failed();
-      return;
+    for (auto &t : targets_) {
+      std::memset(&t.addr, 0, sizeof(t.addr));
+      t.addr.sin_family = AF_INET;
+      t.addr.sin_port = htons(t.port);
+      if (::inet_aton(t.ip.c_str(), &t.addr.sin_addr) == 0) {
+        ESP_LOGE("vban", "invalid target ip: %s", t.ip.c_str());
+        ::close(sock_);
+        sock_ = -1;
+        mark_failed();
+        return;
+      }
     }
 
     if (mic_ != nullptr) {
@@ -57,22 +63,25 @@ class VBANSender : public Component {
       });
     }
 
-    ESP_LOGI("vban", "VBAN sender ready -> %s:%d stream=%s",
-             target_ip_.c_str(), target_port_, stream_name_.c_str());
+    ESP_LOGI("vban", "VBAN sender ready -> %u target(s) stream=%s",
+             (unsigned) targets_.size(), stream_name_.c_str());
   }
 
   void loop() override {
     if (!mic_started_ && mic_ != nullptr) {
       mic_->start();
       mic_started_ = true;
-      ESP_LOGI("vban", "Microphone started, streaming to %s:%d",
-               target_ip_.c_str(), target_port_);
+      ESP_LOGI("vban", "Microphone started, streaming to %u target(s)",
+               (unsigned) targets_.size());
     }
   }
 
   void dump_config() override {
     ESP_LOGCONFIG("vban", "VBAN Sender:");
-    ESP_LOGCONFIG("vban", "  Target: %s:%d", target_ip_.c_str(), target_port_);
+    for (const auto &t : targets_) {
+      ESP_LOGCONFIG("vban", "  Target: %s:%d (send errors: %u)",
+                    t.ip.c_str(), t.port, (unsigned) t.send_errors);
+    }
     ESP_LOGCONFIG("vban", "  Stream name: %s", stream_name_.c_str());
     ESP_LOGCONFIG("vban", "  Socket: %s", sock_ >= 0 ? "OK" : "FAILED");
     ESP_LOGCONFIG("vban", "  Mic started: %s", mic_started_ ? "YES" : "NO");
@@ -130,16 +139,33 @@ class VBANSender : public Component {
     size_t payload = sample_count * 2;
     std::memcpy(packet + 28, data, payload);
 
-    ::sendto(sock_, packet, 28 + payload, 0,
-             (struct sockaddr *)&dest_addr_, sizeof(dest_addr_));
+    // Same packet (and frame counter) for every target.
+    for (auto &t : targets_) {
+      if (::sendto(sock_, packet, 28 + payload, 0,
+                   (struct sockaddr *)&t.addr, sizeof(t.addr)) < 0) {
+        t.send_errors++;
+        uint32_t now = millis();
+        if (now - t.last_error_log_ms >= 5000) {
+          t.last_error_log_ms = now;
+          ESP_LOGW("vban", "sendto %s:%d failed: errno=%d (%u errors)",
+                   t.ip.c_str(), t.port, errno, (unsigned) t.send_errors);
+        }
+      }
+    }
   }
+
+  struct Target {
+    std::string ip;
+    uint16_t port{6980};
+    struct sockaddr_in addr{};
+    uint32_t send_errors{0};
+    uint32_t last_error_log_ms{0};
+  };
 
   microphone::Microphone *mic_{nullptr};
   bool mic_started_{false};
   int sock_{-1};
-  struct sockaddr_in dest_addr_{};
-  std::string target_ip_;
-  uint16_t target_port_{6980};
+  std::vector<Target> targets_;
   std::string stream_name_{"AtomEcho"};
   float gain_{1.0f};
   std::vector<int16_t> gain_scratch_;

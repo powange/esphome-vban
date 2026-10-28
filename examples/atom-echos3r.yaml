@@ -3,7 +3,7 @@ substitutions:
   friendly_name: "Atom Bureau"
   vban_stream_name: "AtomBureau"      # nom du flux envoye par le micro
   vban_tts_stream_name: "AtomBureauSpk"        # nom du flux ecoute pour la lecture TTS (16 chars max)
-  ha_server_ip: "192.168.0.10"        # IP du serveur Home Assistant (a adapter)
+  ha_server_ip: "192.168.0.201"       # IP du serveur Home Assistant (a adapter)
 
 esphome:
   name: ${name}
@@ -137,8 +137,13 @@ vban_sender:
   # Unicast vers Home Assistant plutot que broadcast : en Wi-Fi, le broadcast
   # part au debit minimal et sans accuse de reception (aucune retransmission),
   # d'ou des pertes de paquets. L'unicast est acquitte et retransmis.
-  target_ip: ${ha_server_ip}
-  target_port: 6980
+  # En unicast, Linux ne livre chaque datagramme qu'a un seul socket : chaque
+  # application qui ecoute sur le serveur a donc son propre port.
+  targets:
+    - ip: ${ha_server_ip}   # Wyoming VBAN (Jarvis)
+      port: 6980
+    - ip: ${ha_server_ip}   # ClapTrap
+      port: 6981
   stream_name: ${vban_stream_name}
   gain: 1.0                  # amplification logicielle (mic Atom Echo tres faible)
 
