@@ -140,6 +140,34 @@ micro effectivement arrêté (sinon `Parent bus is busy`), avec un délai max de
 - Surveiller le signal avec un capteur `wifi_signal` : en dessous de
   -70 dBm environ, augmenter `prebuffer_ms`.
 
+## File UDP de lwIP (receiver)
+
+Par défaut, lwIP ne garde que **6 paquets** en attente par socket UDP ; au-delà,
+les paquets sont jetés en silence. Comme l'émetteur TTS envoie par rafales, la
+file déborde entre deux passages dans `loop()`. Le `vban_receiver` limite ce
+risque :
+
+- pendant un flux, il passe la boucle ESPHome en haute fréquence
+  (`HighFrequencyLoopRequester`) et vide le socket à chaque appel (64 paquets
+  max) ;
+- il demande un buffer de réception de 32 Ko (`SO_RCVBUF`) ;
+- il écarte les paquets des autres flux (micros des autres devices sur le même
+  port) dès la lecture du nom.
+
+Il faut aussi agrandir la file dans la config ESP-IDF :
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_LWIP_UDP_RECVMBOX_SIZE: "32"   # 6 par défaut
+      CONFIG_LWIP_SO_RCVBUF: "y"            # pour que SO_RCVBUF soit pris en compte
+```
+
+Sans `CONFIG_LWIP_SO_RCVBUF`, le receiver loggue un warning au boot
+(`setsockopt(SO_RCVBUF) failed`) et continue de fonctionner.
+
 ## Devices testés
 
 - M5Stack Atom Echo S3R (ESP32-S3, codec ES8311)
