@@ -3,6 +3,7 @@
 #include "esphome/components/speaker/speaker.h"
 #include "esphome/components/microphone/microphone.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/automation.h"
 
 #include <lwip/sockets.h>
 #include <arpa/inet.h>
@@ -33,6 +34,20 @@ class VBANReceiver : public Component {
   void set_prebuffer_ms(uint32_t ms) { prebuffer_ms_ = ms; }
 
   float get_setup_priority() const override { return setup_priority::LATE; }
+
+  // Stops the stream being played and ignores the rest of it. Packets of this
+  // stream are dropped until the sender has been silent for idle_timeout_ms;
+  // the next stream then plays normally.
+  void skip() {
+    if (state_ == PlaybackState::IDLE) return;
+    skipping_ = true;
+    skip_last_packet_ms_ = millis();
+    ESP_LOGI("vban_rx", "Skipping stream '%s'", stream_name_.c_str());
+    if (state_ != PlaybackState::STOPPING) stop_playback_();
+  }
+
+  // True from the first packet of a stream until the mic is resumed.
+  bool is_playing() const { return state_ != PlaybackState::IDLE && !skipping_; }
 
   void setup() override {
     ring_.assign(kRingCapacity, 0);
@@ -89,6 +104,11 @@ class VBANReceiver : public Component {
       handle_packet_(buf, n);
     }
 
+    if (skipping_ && millis() - skip_last_packet_ms_ > idle_timeout_ms_) {
+      skipping_ = false;
+      ESP_LOGD("vban_rx", "Skipped stream finished");
+    }
+
     update_playback_();
   }
 
@@ -130,6 +150,12 @@ class VBANReceiver : public Component {
     uint8_t channels = buf[6] + 1;
     if (channels != 1) {
       log_format_warning_("channels", channels);
+      return;
+    }
+
+    // Rest of a skipped stream: drop it, only remember that it is still coming.
+    if (skipping_) {
+      skip_last_packet_ms_ = millis();
       return;
     }
 
@@ -364,6 +390,8 @@ class VBANReceiver : public Component {
   size_t buffer_target_bytes_{0};
   uint32_t speaker_dry_at_us_{0};
   bool underrun_pending_{false};
+  bool skipping_{false};
+  uint32_t skip_last_packet_ms_{0};
   HighFrequencyLoopRequester high_freq_;
 
   // Fixed-capacity circular buffer (~2 s at 16 kHz 16-bit mono).
@@ -371,6 +399,16 @@ class VBANReceiver : public Component {
   std::vector<uint8_t> ring_;
   size_t write_idx_{0};
   size_t ring_size_{0};
+};
+
+template<typename... Ts> class SkipAction : public Action<Ts...>, public Parented<VBANReceiver> {
+ public:
+  void play(const Ts &...x) override { this->parent_->skip(); }
+};
+
+template<typename... Ts> class IsPlayingCondition : public Condition<Ts...>, public Parented<VBANReceiver> {
+ public:
+  bool check(const Ts &...x) override { return this->parent_->is_playing(); }
 };
 
 }  // namespace vban_receiver

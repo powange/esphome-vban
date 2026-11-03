@@ -107,6 +107,29 @@ haché, au prix d'une latence plus élevée.
 [vban_rx] Stream 'TTS1' ended: 412 packets, 0 lost, 0 out of order, 0 underruns
 ```
 
+### Couper la lecture en cours
+
+L'action `vban_receiver.skip` arrête le flux en cours de lecture et ignore la
+suite de ce flux : ses paquets sont jetés jusqu'à ce que l'émetteur se taise
+pendant `idle_timeout_ms`. Le micro reprend tout de suite, et le flux suivant
+est joué normalement. La condition `vban_receiver.is_playing` est vraie pendant
+la lecture d'un flux (et fausse pendant un flux ignoré).
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO41
+      inverted: true
+    on_click:
+      then:
+        - if:
+            condition:
+              vban_receiver.is_playing: vban_in
+            then:
+              - vban_receiver.skip: vban_in
+```
+
 ## Format audio supporté
 
 Les deux composants supportent exclusivement :
