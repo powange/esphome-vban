@@ -156,3 +156,18 @@ vban_receiver:
   stream_name: ${vban_tts_stream_name}   # doit matcher tts_vban_stream_name de l'addon
   idle_timeout_ms: 1500
   prebuffer_ms: 200          # tampon anti-gigue avant de lancer la lecture
+
+# ─── Bouton : clic = couper la reponse TTS en cours ──────────
+binary_sensor:
+  - platform: gpio
+    name: "Button"
+    pin:
+      number: GPIO41
+      inverted: true
+    on_click:
+      then:
+        - if:
+            condition:
+              vban_receiver.is_playing: vban_in
+            then:
+              - vban_receiver.skip: vban_in

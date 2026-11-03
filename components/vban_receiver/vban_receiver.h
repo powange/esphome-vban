@@ -44,6 +44,8 @@ class VBANReceiver : public Component {
     skip_last_packet_ms_ = millis();
     ESP_LOGI("vban_rx", "Skipping stream '%s'", stream_name_.c_str());
     if (state_ != PlaybackState::STOPPING) stop_playback_();
+    // Audio queued while STOPPING would make finish_stop_() restart playback.
+    ring_reset_();
   }
 
   // True from the first packet of a stream until the mic is resumed.
