@@ -1,5 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import automation
 from esphome.components import speaker, microphone
 from esphome.const import CONF_ID
 
@@ -8,6 +9,8 @@ DEPENDENCIES = ["wifi", "network", "speaker"]
 
 vban_receiver_ns = cg.esphome_ns.namespace("vban_receiver")
 VBANReceiver = vban_receiver_ns.class_("VBANReceiver", cg.Component)
+SkipAction = vban_receiver_ns.class_("SkipAction", automation.Action)
+IsPlayingCondition = vban_receiver_ns.class_("IsPlayingCondition", automation.Condition)
 
 CONF_SPEAKER = "speaker"
 CONF_MICROPHONE = "microphone"
@@ -42,3 +45,24 @@ async def to_code(config):
     cg.add(var.set_stream_name(config[CONF_STREAM_NAME]))
     cg.add(var.set_idle_timeout_ms(config[CONF_IDLE_TIMEOUT_MS]))
     cg.add(var.set_prebuffer_ms(config[CONF_PREBUFFER_MS]))
+
+
+VBAN_RECEIVER_ACTION_SCHEMA = automation.maybe_simple_id(
+    {cv.GenerateID(): cv.use_id(VBANReceiver)}
+)
+
+
+@automation.register_action("vban_receiver.skip", SkipAction, VBAN_RECEIVER_ACTION_SCHEMA)
+async def vban_receiver_skip_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+@automation.register_condition(
+    "vban_receiver.is_playing", IsPlayingCondition, VBAN_RECEIVER_ACTION_SCHEMA
+)
+async def vban_receiver_is_playing_to_code(config, condition_id, template_arg, args):
+    var = cg.new_Pvariable(condition_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
